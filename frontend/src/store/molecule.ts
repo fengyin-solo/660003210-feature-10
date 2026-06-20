@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { MoleculeData, ADMETProps } from '../types'
+import type { MoleculeData, ADMETProps, RiskLevel, RiskAlert } from '../types'
 
 const ATOM_COLORS: Record<string, string> = {
   C: '#6b7280', N: '#3b82f6', O: '#ef4444', S: '#eab308',
@@ -85,6 +85,142 @@ export function computeADMET(mol: { mw: number; logP: number; formula: string })
   const metabolicStability = mw < 300 ? '稳定' : mw < 450 ? '中等' : '不稳定'
   const bioavailability = Math.max(0, Math.min(100, Math.round(100 - logP * 8 - mw * 0.05)))
 
+  let logPScore = 0
+  if (logP > 5 || logP < -2) logPScore = 2
+  else if (logP > 3 || logP < 0) logPScore = 1
+
+  let logSScore = 0
+  if (logS < -6) logSScore = 2
+  else if (logS >= -6 && logS <= -4) logSScore = 1
+
+  let toxicityScore = 0
+  if (toxicity === '高毒性风险') toxicityScore = 2
+  else if (toxicity === '中等毒性') toxicityScore = 1
+
+  let pbScore = 0
+  if (proteinBinding < 50 || proteinBinding > 95) pbScore = 2
+  else if ((proteinBinding >= 50 && proteinBinding < 70) || (proteinBinding > 90 && proteinBinding <= 95)) pbScore = 1
+
+  let msScore = 0
+  if (metabolicStability === '不稳定') msScore = 2
+  else if (metabolicStability === '中等') msScore = 1
+
+  let baScore = 0
+  if (bioavailability < 30) baScore = 2
+  else if (bioavailability >= 30 && bioavailability <= 50) baScore = 1
+
+  let lipinskiScore = 0
+  if (violations >= 2) lipinskiScore = 2
+  else if (violations === 1) lipinskiScore = 1
+
+  const riskScore = logPScore + logSScore + toxicityScore + pbScore + msScore + baScore + lipinskiScore
+
+  let riskLevel: RiskLevel
+  if (riskScore <= 3) riskLevel = 'A'
+  else if (riskScore <= 7) riskLevel = 'B'
+  else if (riskScore <= 10) riskLevel = 'C'
+  else riskLevel = 'D'
+
+  const riskAlerts: RiskAlert[] = []
+
+  if (logPScore >= 2) {
+    riskAlerts.push({
+      type: 'danger',
+      title: 'LogP 严重异常',
+      detail: `LogP值为${Math.round(logP * 100) / 100}，超出理想范围(0-3)，可能导致吸收或代谢问题`
+    })
+  } else if (logPScore === 1) {
+    riskAlerts.push({
+      type: 'warning',
+      title: 'LogP 轻微异常',
+      detail: `LogP值为${Math.round(logP * 100) / 100}，偏离理想范围(0-3)，建议关注`
+    })
+  }
+
+  if (logSScore >= 2) {
+    riskAlerts.push({
+      type: 'danger',
+      title: 'LogS 溶解度严重问题',
+      detail: `LogS值为${Math.round(logS * 100) / 100}，溶解度极差，可能严重影响生物利用度`
+    })
+  } else if (logSScore === 1) {
+    riskAlerts.push({
+      type: 'warning',
+      title: 'LogS 溶解度问题',
+      detail: `LogS值为${Math.round(logS * 100) / 100}，溶解度偏低，可能影响吸收`
+    })
+  }
+
+  if (toxicityScore >= 2) {
+    riskAlerts.push({
+      type: 'danger',
+      title: '高毒性风险',
+      detail: '预测存在高毒性风险，需重点关注安全性评价'
+    })
+  } else if (toxicityScore === 1) {
+    riskAlerts.push({
+      type: 'warning',
+      title: '中等毒性风险',
+      detail: '预测存在中等毒性风险，建议进行毒性评估'
+    })
+  }
+
+  if (pbScore >= 2) {
+    riskAlerts.push({
+      type: 'danger',
+      title: '蛋白结合率严重异常',
+      detail: `蛋白结合率为${proteinBinding}%，超出理想范围(70%-90%)，可能影响药物分布`
+    })
+  } else if (pbScore === 1) {
+    riskAlerts.push({
+      type: 'warning',
+      title: '蛋白结合率异常',
+      detail: `蛋白结合率为${proteinBinding}%，偏离理想范围(70%-90%)，建议关注`
+    })
+  }
+
+  if (msScore >= 2) {
+    riskAlerts.push({
+      type: 'danger',
+      title: '代谢稳定性差',
+      detail: '代谢不稳定，可能导致药物半衰期过短或活性代谢物问题'
+    })
+  } else if (msScore === 1) {
+    riskAlerts.push({
+      type: 'warning',
+      title: '代谢稳定性中等',
+      detail: '代谢稳定性中等，建议进行代谢研究'
+    })
+  }
+
+  if (baScore >= 2) {
+    riskAlerts.push({
+      type: 'danger',
+      title: '生物利用度低',
+      detail: `生物利用度仅为${bioavailability}%，可能需要改进给药方案或结构修饰`
+    })
+  } else if (baScore === 1) {
+    riskAlerts.push({
+      type: 'warning',
+      title: '生物利用度中等',
+      detail: `生物利用度为${bioavailability}%，建议关注吸收问题`
+    })
+  }
+
+  if (lipinskiScore >= 2) {
+    riskAlerts.push({
+      type: 'danger',
+      title: 'Lipinski规则严重违反',
+      detail: `违反${violations}项Lipinski规则，成药性风险较高`
+    })
+  } else if (lipinskiScore === 1) {
+    riskAlerts.push({
+      type: 'warning',
+      title: 'Lipinski规则轻微违反',
+      detail: '违反1项Lipinski规则，建议评估对成药性的影响'
+    })
+  }
+
   return {
     logP: Math.round(logP * 100) / 100,
     logS: Math.round(logS * 100) / 100,
@@ -93,9 +229,13 @@ export function computeADMET(mol: { mw: number; logP: number; formula: string })
     metabolicStability,
     bioavailability,
     ruleOfFive: violations <= 1,
-    violations
+    violations,
+    riskLevel,
+    riskScore,
+    riskAlerts
   }
 }
+
 
 export const useMoleculeStore = defineStore('molecule', () => {
   const molecules = ref<MoleculeData[]>([])
